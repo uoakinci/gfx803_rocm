@@ -6,10 +6,10 @@
 FROM rocm6_gfx803_base:6.4
 
 ENV OLLAMA_WEBGUI_PORT=8080 \
-    OLLAMA_PORT=11434 \
-    OLLAMA_HOST=0.0.0.0\
+    OLLAMA_PORT=11435 \
+    OLLAMA_HOST=0.0.0.0:11435\
     # To Install and enable ollama WEBUI set OLLAMA_WEBUI=1, to disable change it to "0"
-    OLLAMA_WEBUI=1 \
+    OLLAMA_WEBUI=0 \
     COMMANDLINE_ARGS='' 
 
 ## Checkout interactive LLM Benchmark for Ollama
@@ -59,4 +59,4 @@ RUN touch ol_serve.sh && \
 
 EXPOSE ${OLLAMA_WEBGUI_PORT} ${OLLAMA_PORT}
 
-ENTRYPOINT ["/ollama/ol_serve.sh"]
+CMD ["bash", "/ollama/ol_serve.sh"]
