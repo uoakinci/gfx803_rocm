@@ -6,35 +6,39 @@ FROM rocm/dev-ubuntu-24.04:6.4-complete
 SHELL ["/bin/bash", "-c"]  
 ENV COMMANDLINE_ARGS='' \
     ### how many CPUCores are using while compiling
-    MAX_JOBS=14 \ 
+    MAX_JOBS=12 \
+    OLLAMA_HOST='0.0.0.0:11435' \
+    OLLAMA_MODELS='/models' \
+    PORTSSHD='25' \
     ### Settings for AMD GPU RX570/RX580/RX590 GPU
-    HSA_OVERRIDE_GFX_VERSION=8.0.3 \ 
+    HSA_OVERRIDE_GFX_VERSION=8.0.3 \
     PYTORCH_ROCM_ARCH=gfx803 \
-    ROCM_ARCH=gfx803 \ 
-    TORCH_BLAS_PREFER_HIPBLASLT=0\ 
+    ROCM_ARCH=gfx803 \
+    TORCH_BLAS_PREFER_HIPBLASLT=0\
     ROC_ENABLE_PRE_VEGA=1 \
-    USE_CUDA=0 \  
-    USE_ROCM=1 \ 
+    USE_CUDA=0 \
+    USE_ROCM=1 \
     USE_NINJA=1 \
-    FORCE_CUDA=1 \ 
+    FORCE_CUDA=1 \
     JOBLIB_START_METHOD=thread \
     #TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 \
     #PYTORCH_TUNABLEOP_ENABLED=1 \
 #######
     DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PYTHONENCODING=UTF-8\      
+    PYTHONENCODING=UTF-8\
     REQS_FILE='requirements.txt' \
     PIP_ROOT_USER_ACTION='ignore' \
-    COMMANDLINE_ARGS='' 
+    COMMANDLINE_ARGS=''
+
 
 ## Write the Environment VARSs to global... to compile later with while you use #docker export# and/or #docker commit# to save Storage Consumption 
-RUN echo OLLAMA_HOST=${OLLAMA_HOST} >> /etc/environment && \ 
-    echo MAX_JOBS=${MAX_JOBS} >> /etc/environment && \ 
-    echo HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION} >> /etc/environment && \ 
-    echo PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} >> /etc/environment && \ 
-    echo ROCM_ARCH=${ROCM_ARCH} >> /etc/environment && \ 
-    echo TORCH_BLAS_PREFER_HIPBLASLT=${TORCH_BLAS_PREFER_HIPBLASLT} >> /etc/environment && \ 
+RUN echo OLLAMA_HOST=${OLLAMA_HOST} >> /etc/environment && \
+    echo MAX_JOBS=${MAX_JOBS} >> /etc/environment && \
+    echo HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION} >> /etc/environment && \
+    echo PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} >> /etc/environment && \
+    echo ROCM_ARCH=${ROCM_ARCH} >> /etc/environment && \
+    echo TORCH_BLAS_PREFER_HIPBLASLT=${TORCH_BLAS_PREFER_HIPBLASLT} >> /etc/environment && \
     echo ROC_ENABLE_PRE_VEGA=${ROC_ENABLE_PRE_VEGA} >> /etc/environment && \
     echo USE_CUDA=${USE_CUDA} >> /etc/environment && \
     echo USE_ROCM=${USE_ROCM} >> /etc/environment && \
@@ -42,7 +46,10 @@ RUN echo OLLAMA_HOST=${OLLAMA_HOST} >> /etc/environment && \
     echo FORCE_CUDA=${FORCE_CUDA} >> /etc/environment && \
     echo JOBLIB_START_METHOD=${JOBLIB_START_METHOD} >> /etc/environment && \
     echo PIP_ROOT_USER_ACTION=${PIP_ROOT_USER_ACTION} >> /etc/environment && \
+    echo OLLAMA_MODELS=${OLLAMA_MODELS}  >> /etc/environment && \
+    echo PORTSSHD=${PORTSSHD}  >> /etc/environment && \
     true
+
 
 ## Export the AMD Stuff
 RUN export OLLAMA_HOST=${OLLAMA_HOST} && \
@@ -62,16 +69,47 @@ RUN export OLLAMA_HOST=${OLLAMA_HOST} && \
   
 ## Update System and install golang for ollama and python virtual Env
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends virtualenv google-perftools golang git python3-venv cmake wget ffmpeg python3 curl && \
+    apt-get install -y --no-install-recommends virtualenv google-perftools golang git python3-venv cmake wget ffmpeg python3 curl openssh-server sudo >
     # for Ollama and WhsiperX
     apt-get install -y --no-install-recommends libomp-dev libopenblas-dev &&\
     # optional stuff to debug and made your docker experience more efficiency :P
-    apt-get install -y --no-install-recommends ccache tmux mc pigz plocate vim &&\ 
+    apt-get install -y --no-install-recommends ccache tmux mc pigz plocate vim &&\
     python3 -m venv .venv && \
     . .venv/bin/activate && \
     pip install --upgrade pip wheel && \
-    pip install cmake mkl mkl-include && \ 
+    pip install cmake mkl mkl-include && \
     true
+
+RUN useradd -rm -d /home/polaris -s /bin/bash -g root -G sudo -u 1001 polaris && \
+        echo 'polaris:polaris' | chpasswd && \
+        echo 'polaris ALL=(ALL) NOPASSWD: ALL' | tee -a /etc/sudoers && \
+        service ssh start && \
+    true
+
+RUN cat > /usr/local/bin/sshd-entrypoint.sh <<'EOF'
+#!/usr/bin/env sh
+# ----------------------------------------------------------
+#  docker‑entrypoint.sh
+#
+#  1. Start sshd in the background
+#  2. `exec "$@"` runs the CMD / docker‑run args
+#  3. When the main command dies, kill sshd
+# ----------------------------------------------------------
+/usr/sbin/sshd -D -p ${PORTSSHD} &
+SSHD_PID=$!
+
+# Small pause gives sshd a moment to bind port 22
+sleep 1
+
+# Run the user‑supplied command (the CMD from the child image
+# or what the user typed after `docker run …`).
+exec "$@"
+
+# Clean‑up: if the child command exits, terminate the daemon
+kill -9 "$SSHD_PID" 2>/dev/null || true
+EOF
+
+RUN chmod +x /usr/local/bin/sshd-entrypoint.sh
 
 ## Install AMDGPU_TOP to monitor GPU utilization
 RUN wget https://github.com/Umio-Yasuno/amdgpu_top/releases/download/v0.10.4/amdgpu-top_0.10.4-1_amd64.deb &&\
@@ -89,4 +127,7 @@ RUN echo "BUILDING rocBLAS with ARCH: ${ROCM_ARCH} and JOBS: ${MAX_JOBS}" && \
     ./install.sh -ida ${ROCM_ARCH} -j ${MAX_JOBS} && \
     true
 
+ EXPOSE ${PORTSSH}
+ ENTRYPOINT ["/usr/local/bin/sshd-entrypoint.sh"]
  CMD ["/bin/bash","-c"]
+
